@@ -1,0 +1,86 @@
+# ======================================================================
+# Central configuration. Everything you are likely to tune lives here.
+# Items marked TODO(YOU) are decisions that are yours to make.
+# ======================================================================
+
+data:
+  raw_path: data/raw/sessions.json      # ACN-Data export (.json or .csv). Use data/raw/synthetic_sessions.csv to test.
+  processed_dir: data/processed
+  timezone: America/Los_Angeles         # Caltech site. Sessions are converted to this local time.
+  energy_column: kWhDelivered           # TODO(YOU): kWhDelivered (what was actually delivered) vs kWhRequested
+                                        #   (the user's own estimate, noisier). Decide, and be ready to justify it in the viva.
+  step_minutes: 15                      # length of one decision step
+  day_start_hour: 4                     # an "operating day" runs 04:00 -> 04:00 so few sessions cross the boundary
+  min_duration_min: 15                  # drop sessions shorter than this
+  min_energy_kwh: 0.5                   # drop sessions requesting less than this
+  min_sessions_per_day: 5               # drop days with fewer sessions (outages, holidays)
+  max_ev_rate_kw: 6.6                   # per-EV charging power limit (ACN Level-2 ports are about 6.6 kW)
+  split_fractions: [0.70, 0.15, 0.15]   # chronological train / val / test
+
+tariff:
+  # Time-of-use price in $/kWh, by wall-clock hour [start, end).
+  # TODO(YOU): replace with a tariff you can justify (e.g. SCE TOU-EV for Caltech, or an Indian ToU tariff).
+  # IMPORTANT: savings only exist if the cheap window overlaps the hours EVs are actually parked.
+  # Run scripts/eda.py first and look at the arrival/departure plots before choosing.
+  weekday:
+    - {start: 0,  end: 7,  price: 0.15}
+    - {start: 7,  end: 10, price: 0.30}
+    - {start: 10, end: 15, price: 0.10}   # midday "solar" dip
+    - {start: 15, end: 21, price: 0.40}   # evening peak
+    - {start: 21, end: 24, price: 0.15}
+  weekend:
+    - {start: 0,  end: 10, price: 0.15}
+    - {start: 10, end: 15, price: 0.10}
+    - {start: 15, end: 21, price: 0.25}
+    - {start: 21, end: 24, price: 0.15}
+
+env:
+  station_cap_kw: 50.0        # TODO(YOU): set after EDA (scripts/eda.py prints the ASAP peak-load percentiles).
+                               #   Rule of thumb: ~60-70% of the typical ASAP daily peak so the cap actually binds.
+  n_levels: 5                  # action = power level in {0, 1/(n-1), ..., 1} x station_cap_kw
+  forecast_steps: 24            # how many future price steps the agent sees (set 0 for the ablation "no forecast")
+  w_unmet: 5.0                 # $ penalty per kWh not delivered at departure. MUST be >> max price (else agent never charges)
+  w_peak: 0.0                  # $ penalty per kW above peak_threshold_kw (0 = disabled)
+  peak_threshold_kw: null      # e.g. 70.0 to enable a soft peak limit together with w_peak > 0
+  reward_scale: 0.1            # reward = raw_reward * reward_scale (keeps Q-values in a friendly range)
+  max_evs_norm: 40             # normalisation constant for "number of EVs plugged in"
+
+train:
+  algo: dqn
+  total_timesteps: 200000      # about 2000 episodes of 96 steps
+  eval_freq: 10000             # evaluate on validation days every N steps and keep the best model
+  seeds: [0]                   # TODO(YOU): use at least 3-5 seeds for the final results
+
+dqn:
+  net_arch: [128, 128]
+  learning_rate: 0.001
+  buffer_size: 100000
+  learning_starts: 1000
+  batch_size: 64
+  gamma: 0.99
+  train_freq: 4
+  target_update_interval: 1000
+  exploration_fraction: 0.3
+  exploration_final_eps: 0.05
+
+# TODO(YOU): if you add a second algorithm, put its hyper-parameters in a block here (e.g. `ppo:`), see README.
+
+ppo:
+  net_arch: [128, 128]
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+
+a2c:
+  net_arch: [128, 128]
+  learning_rate: 0.0007
+  n_steps: 32
+  gamma: 0.99
+  gae_lambda: 1.0
+  ent_coef: 0.01
+  vf_coef: 0.5
